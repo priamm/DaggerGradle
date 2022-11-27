@@ -1,8 +1,9 @@
 package dagger.internal;
 
+import dagger.Lazy;
 import javax.inject.Provider;
 
-public final class ScopedProvider<T> implements Provider<T> {
+public final class ScopedProvider<T> implements Provider<T>, Lazy<T> {
   private static final Object UNINITIALIZED = new Object();
 
   private final Factory<T> factory;

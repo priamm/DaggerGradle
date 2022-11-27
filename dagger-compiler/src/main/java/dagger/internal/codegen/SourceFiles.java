@@ -1,34 +1,35 @@
 package dagger.internal.codegen;
 
 import com.google.common.base.CaseFormat;
+import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
-import dagger.internal.DoubleCheckLazy;
-import dagger.internal.codegen.ContributionBinding.BindingType;
-import dagger.internal.codegen.writer.ClassName;
-import dagger.internal.codegen.writer.ParameterizedTypeName;
-import dagger.internal.codegen.writer.Snippet;
-import dagger.internal.codegen.writer.TypeName;
-import dagger.internal.codegen.writer.TypeNames;
-import java.util.Collection;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeVariableName;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Types;
 
 import static com.google.common.base.CaseFormat.UPPER_CAMEL;
+import static com.google.common.base.Preconditions.checkArgument;
+import static dagger.internal.codegen.FrameworkDependency.frameworkDependenciesForBinding;
+import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK_LAZY;
 
 class SourceFiles {
+
+  private static final Joiner CLASS_FILE_NAME_JOINER = Joiner.on('_');
+  private static final Joiner CANONICAL_NAME_JOINER = Joiner.on('$');
 
   static final Ordering<DependencyRequest> DEPENDENCY_ORDERING = new Ordering<DependencyRequest>() {
     @Override
@@ -41,178 +42,196 @@ class SourceFiles {
     }
   };
 
-  static ImmutableSetMultimap<BindingKey, DependencyRequest> indexDependenciesByUnresolvedKey(
-      Types types, Iterable<? extends DependencyRequest> dependencies) {
-    ImmutableSetMultimap.Builder<BindingKey, DependencyRequest> dependenciesByKeyBuilder =
-        new ImmutableSetMultimap.Builder<BindingKey, DependencyRequest>()
-            .orderValuesBy(DEPENDENCY_ORDERING);
-    for (DependencyRequest dependency : dependencies) {
-      BindingKey resolved = dependency.bindingKey();
-      TypeMirror unresolvedType =
-          DependencyRequest.Factory.extractKindAndType(dependency.requestElement().asType()).type();
-      BindingKey unresolved =
-          BindingKey.create(resolved.kind(), resolved.key().withType(types, unresolvedType));
-      dependenciesByKeyBuilder.put(unresolved, dependency);
-    }
-    return dependenciesByKeyBuilder.build();
-  }
-
-  static ImmutableSetMultimap<BindingKey, DependencyRequest> indexDependenciesByKey(
-      Iterable<? extends DependencyRequest> dependencies) {
-    ImmutableSetMultimap.Builder<BindingKey, DependencyRequest> dependenciesByKeyBuilder =
-        new ImmutableSetMultimap.Builder<BindingKey, DependencyRequest>()
-            .orderValuesBy(DEPENDENCY_ORDERING);
-    for (DependencyRequest dependency : dependencies) {
-      dependenciesByKeyBuilder.put(dependency.bindingKey(), dependency);
-    }
-    return dependenciesByKeyBuilder.build();
-  }
-
   static ImmutableMap<BindingKey, FrameworkField> generateBindingFieldsForDependencies(
-      DependencyRequestMapper dependencyRequestMapper,
-      Iterable<? extends DependencyRequest> dependencies) {
-    ImmutableSetMultimap<BindingKey, DependencyRequest> dependenciesByKey =
-        indexDependenciesByKey(dependencies);
-    Map<BindingKey, Collection<DependencyRequest>> dependenciesByKeyMap =
-        dependenciesByKey.asMap();
-    ImmutableMap.Builder<BindingKey, FrameworkField> bindingFields = ImmutableMap.builder();
-    for (Entry<BindingKey, Collection<DependencyRequest>> entry
-        : dependenciesByKeyMap.entrySet()) {
-      BindingKey bindingKey = entry.getKey();
-      Collection<DependencyRequest> requests = entry.getValue();
-      Class<?> frameworkClass =
-          dependencyRequestMapper.getFrameworkClass(requests.iterator().next());
-      ImmutableSet<String> dependencyNames =
-          FluentIterable.from(requests).transform(new DependencyVariableNamer()).toSet();
+      Binding binding) {
+    checkArgument(!binding.unresolved().isPresent(), "binding must be unresolved: %s", binding);
 
-      if (dependencyNames.size() == 1) {
-        String name = Iterables.getOnlyElement(dependencyNames);
-        bindingFields.put(bindingKey,
-            FrameworkField.createWithTypeFromKey(frameworkClass, bindingKey, name));
-      } else {
-        Iterator<String> namesIterator = dependencyNames.iterator();
-        String first = namesIterator.next();
-        StringBuilder compositeNameBuilder = new StringBuilder(first);
-        while (namesIterator.hasNext()) {
-          compositeNameBuilder.append("And").append(
-              CaseFormat.LOWER_CAMEL.to(UPPER_CAMEL, namesIterator.next()));
-        }
-        bindingFields.put(bindingKey, FrameworkField.createWithTypeFromKey(
-            frameworkClass, bindingKey, compositeNameBuilder.toString()));
-      }
+    ImmutableMap.Builder<BindingKey, FrameworkField> bindingFields = ImmutableMap.builder();
+    for (FrameworkDependency frameworkDependency : frameworkDependenciesForBinding(binding)) {
+      bindingFields.put(
+          frameworkDependency.bindingKey(),
+          FrameworkField.createWithTypeFromKey(
+              frameworkDependency.frameworkClass(),
+              frameworkDependency.bindingKey().key(),
+              fieldNameForDependency(frameworkDependency)));
     }
     return bindingFields.build();
   }
 
-  static Snippet frameworkTypeUsageStatement(Snippet frameworkTypeMemberSelect,
-      DependencyRequest.Kind dependencyKind) {
+  private static String fieldNameForDependency(FrameworkDependency frameworkDependency) {
+    ImmutableSet<String> dependencyNames =
+        FluentIterable.from(frameworkDependency.dependencyRequests())
+            .transform(new DependencyVariableNamer())
+            .toSet();
+
+    if (dependencyNames.size() == 1) {
+      return Iterables.getOnlyElement(dependencyNames);
+    } else {
+      Iterator<String> namesIterator = dependencyNames.iterator();
+      String first = namesIterator.next();
+      StringBuilder compositeNameBuilder = new StringBuilder(first);
+      while (namesIterator.hasNext()) {
+        compositeNameBuilder
+            .append("And")
+            .append(CaseFormat.LOWER_CAMEL.to(UPPER_CAMEL, namesIterator.next()));
+      }
+      return compositeNameBuilder.toString();
+    }
+  }
+
+  static CodeBlock frameworkTypeUsageStatement(
+      CodeBlock frameworkTypeMemberSelect, DependencyRequest.Kind dependencyKind) {
     switch (dependencyKind) {
       case LAZY:
-        return Snippet.format("%s.create(%s)", ClassName.fromClass(DoubleCheckLazy.class),
-            frameworkTypeMemberSelect);
+        return CodeBlocks.format(
+            "$T.create($L)", DOUBLE_CHECK_LAZY, frameworkTypeMemberSelect);
       case INSTANCE:
       case FUTURE:
-        return Snippet.format("%s.get()", frameworkTypeMemberSelect);
+        return CodeBlocks.format("$L.get()", frameworkTypeMemberSelect);
       case PROVIDER:
       case PRODUCER:
       case MEMBERS_INJECTOR:
-        return Snippet.format("%s", frameworkTypeMemberSelect);
+        return CodeBlocks.format("$L", frameworkTypeMemberSelect);
       default:
         throw new AssertionError();
     }
   }
 
-  static ClassName factoryNameForProvisionBinding(ProvisionBinding binding) {
-    TypeElement enclosingTypeElement = binding.bindingTypeElement();
-    ClassName enclosingClassName = ClassName.fromTypeElement(enclosingTypeElement);
-    switch (binding.bindingKind()) {
-      case INJECTION:
+  static ClassName generatedClassNameForBinding(Binding binding) {
+    switch (binding.bindingType()) {
       case PROVISION:
-        return enclosingClassName.topLevelClassName().peerNamed(
-            enclosingClassName.classFileName() + "_" + factoryPrefix(binding) + "Factory");
-      case SYNTHETIC_PROVISON:
-        throw new IllegalArgumentException();
+      case PRODUCTION:
+        ContributionBinding contribution = (ContributionBinding) binding;
+        checkArgument(!contribution.isSyntheticBinding());
+        ClassName enclosingClassName = ClassName.get(contribution.bindingTypeElement());
+        switch (contribution.bindingKind()) {
+          case INJECTION:
+          case PROVISION:
+          case IMMEDIATE:
+          case FUTURE_PRODUCTION:
+            return enclosingClassName
+                .topLevelClassName()
+                .peerClass(
+                    canonicalName(enclosingClassName)
+                        + "_"
+                        + factoryPrefix(contribution)
+                        + "Factory");
+
+          default:
+            throw new AssertionError();
+        }
+
+      case MEMBERS_INJECTION:
+        return membersInjectorNameForType(binding.bindingTypeElement());
+
       default:
         throw new AssertionError();
     }
   }
 
-  static TypeName parameterizedFactoryNameForProvisionBinding(
-      ProvisionBinding binding) {
-    ClassName factoryName = factoryNameForProvisionBinding(binding);
-    List<TypeName> parameters = ImmutableList.of();
-    if (binding.bindingType().equals(BindingType.UNIQUE)) {
-      switch(binding.bindingKind()) {
-        case INJECTION:
-          TypeName bindingName = TypeNames.forTypeMirror(binding.key().type());
-          if (bindingName instanceof ParameterizedTypeName) {
-            parameters = ((ParameterizedTypeName) bindingName).parameters();
-          }
-          break;
-        case PROVISION:
-          if (!binding.bindingTypeElement().getTypeParameters().isEmpty()) {
-            parameters = ((ParameterizedTypeName) TypeNames.forTypeMirror(
-                binding.bindingTypeElement().asType())).parameters();
-          }
-          break;
-        default:
-      }
+  static TypeName parameterizedGeneratedTypeNameForBinding(
+      Binding binding) {
+    ClassName className = generatedClassNameForBinding(binding);
+    ImmutableList<TypeName> typeParameters = bindingTypeParameters(binding);
+    if (typeParameters.isEmpty()) {
+      return className;
+    } else {
+      return ParameterizedTypeName.get(
+          className,
+          FluentIterable.from(typeParameters).toArray(TypeName.class));
     }
-    return parameters.isEmpty() ? factoryName
-        : ParameterizedTypeName.create(factoryName, parameters);
   }
 
-  static ClassName factoryNameForProductionBinding(ProductionBinding binding) {
-    TypeElement enclosingTypeElement = binding.bindingTypeElement();
-    ClassName enclosingClassName = ClassName.fromTypeElement(enclosingTypeElement);
-    switch (binding.bindingKind()) {
-      case IMMEDIATE:
-      case FUTURE_PRODUCTION:
-        return enclosingClassName.topLevelClassName().peerNamed(
-            enclosingClassName.classFileName() + "_" + factoryPrefix(binding) + "Factory");
+  private static Optional<TypeMirror> typeMirrorForBindingTypeParameters(Binding binding)
+      throws AssertionError {
+    switch (binding.bindingType()) {
+      case PROVISION:
+      case PRODUCTION:
+        ContributionBinding contributionBinding = (ContributionBinding) binding;
+        switch (contributionBinding.bindingKind()) {
+          case INJECTION:
+            return Optional.of(contributionBinding.key().type());
+
+          case PROVISION:
+            return Optional.of(contributionBinding.bindingTypeElement().asType());
+
+          case IMMEDIATE:
+          case FUTURE_PRODUCTION:
+            throw new UnsupportedOperationException();
+            
+          default:
+            return Optional.absent();
+        }
+
+      case MEMBERS_INJECTION:
+        return Optional.of(binding.key().type());
+
       default:
         throw new AssertionError();
     }
   }
 
-  static TypeName parameterizedMembersInjectorNameForMembersInjectionBinding(
-      MembersInjectionBinding binding) {
-    ClassName factoryName = membersInjectorNameForMembersInjectionBinding(binding);
-    TypeName bindingName = TypeNames.forTypeMirror(binding.key().type());
-    if (bindingName instanceof ParameterizedTypeName) {
-      return ParameterizedTypeName.create(factoryName,
-          ((ParameterizedTypeName) bindingName).parameters());
+  static ImmutableList<TypeName> bindingTypeParameters(
+      Binding binding) {
+    Optional<TypeMirror> typeMirror = typeMirrorForBindingTypeParameters(binding);
+    if (!typeMirror.isPresent()) {
+      return ImmutableList.of();
     }
-    return factoryName;
+    TypeName bindingTypeName = TypeName.get(typeMirror.get());
+    return bindingTypeName instanceof ParameterizedTypeName
+        ? ImmutableList.copyOf(((ParameterizedTypeName) bindingTypeName).typeArguments)
+        : ImmutableList.<TypeName>of();
   }
 
-  static ClassName membersInjectorNameForMembersInjectionBinding(MembersInjectionBinding binding) {
-    ClassName injectedClassName = ClassName.fromTypeElement(binding.bindingElement());
-    return injectedClassName.topLevelClassName().peerNamed(
-        injectedClassName.classFileName() + "_MembersInjector");
+  static ClassName membersInjectorNameForType(TypeElement typeElement) {
+    return siblingClassName(typeElement,  "_MembersInjector");
   }
 
-  private static String factoryPrefix(ProvisionBinding binding) {
+  @Deprecated
+  static String canonicalName(ClassName className) {
+    return CANONICAL_NAME_JOINER.join(className.simpleNames());
+  }
+
+  static String classFileName(ClassName className) {
+    return CLASS_FILE_NAME_JOINER.join(className.simpleNames());
+  }
+
+  static ClassName generatedMonitoringModuleName(
+      TypeElement componentElement) {
+    return siblingClassName(componentElement, "_MonitoringModule");
+  }
+
+  static ClassName generatedProductionExecutorModuleName(TypeElement componentElement) {
+    return siblingClassName(componentElement, "_ProductionExecutorModule");
+  }
+
+  private static ClassName siblingClassName(TypeElement typeElement, String suffix) {
+    ClassName className = ClassName.get(typeElement);
+    return className.topLevelClassName().peerClass(canonicalName(className) + suffix);
+  }
+
+  private static String factoryPrefix(ContributionBinding binding) {
     switch (binding.bindingKind()) {
       case INJECTION:
         return "";
+
       case PROVISION:
-        return CaseFormat.LOWER_CAMEL.to(UPPER_CAMEL,
-            ((ExecutableElement) binding.bindingElement()).getSimpleName().toString());
+      case IMMEDIATE:
+      case FUTURE_PRODUCTION:
+        return CaseFormat.LOWER_CAMEL.to(
+            UPPER_CAMEL, ((ExecutableElement) binding.bindingElement()).getSimpleName().toString());
+
       default:
         throw new IllegalArgumentException();
     }
   }
 
-  private static String factoryPrefix(ProductionBinding binding) {
-    switch (binding.bindingKind()) {
-      case IMMEDIATE:
-      case FUTURE_PRODUCTION:
-        return CaseFormat.LOWER_CAMEL.to(UPPER_CAMEL,
-            ((ExecutableElement) binding.bindingElement()).getSimpleName().toString());
-      default:
-        throw new IllegalArgumentException();
+  static ImmutableList<TypeVariableName> bindingTypeElementTypeVariableNames(Binding binding) {
+    ImmutableList.Builder<TypeVariableName> builder = ImmutableList.builder();
+    for (TypeParameterElement typeParameter : binding.bindingTypeElement().getTypeParameters()) {
+      builder.add(TypeVariableName.get(typeParameter));
     }
+    return builder.build();
   }
 
   private SourceFiles() {}

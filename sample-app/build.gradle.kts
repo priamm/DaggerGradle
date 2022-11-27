@@ -84,6 +84,6 @@ dependencies {
     implementation ("com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:1.2.0")
     implementation(project(":dagger"))
-    kapt(project(":dagger-compiler"))
+    annotationProcessor(project(":dagger-compiler"))
 
 }

@@ -19,4 +19,9 @@ public @interface ProductionComponent {
   Class<?>[] modules() default {};
 
   Class<?>[] dependencies() default {};
+
+  @Target(TYPE)
+  @Documented
+  @interface Builder {}
 }
+

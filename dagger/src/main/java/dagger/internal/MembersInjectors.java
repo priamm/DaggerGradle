@@ -3,7 +3,14 @@ package dagger.internal;
 import dagger.MembersInjector;
 import javax.inject.Inject;
 
+import static dagger.internal.Preconditions.checkNotNull;
+
 public final class MembersInjectors {
+
+  public static <T> T injectMembers(MembersInjector<T> membersInjector, T instance) {
+    membersInjector.injectMembers(instance);
+    return instance;
+  }
 
   @SuppressWarnings("unchecked")
   public static <T> MembersInjector<T> noOp() {
@@ -14,15 +21,13 @@ public final class MembersInjectors {
     INSTANCE;
 
     @Override public void injectMembers(Object instance) {
-      if (instance == null) {
-        throw new NullPointerException();
-      }
+      checkNotNull(instance);
     }
   }
 
   @SuppressWarnings("unchecked")
   public static <T> MembersInjector<T> delegatingTo(MembersInjector<? super T> delegate) {
-    return (MembersInjector<T>) delegate;
+    return (MembersInjector<T>) checkNotNull(delegate);
   }
 
   private MembersInjectors() {}

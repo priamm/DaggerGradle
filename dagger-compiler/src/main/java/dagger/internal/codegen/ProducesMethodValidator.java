@@ -20,79 +20,86 @@ import javax.lang.model.util.Elements;
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
-import static dagger.internal.codegen.ConfigurationAnnotations.getMapKeys;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_ABSTRACT;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_RETURN_A_VALUE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_IN_MODULE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_MAP_HAS_MAP_KEY;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_PRIVATE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_SET_VALUES_RAW_SET;
-import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_STATIC;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_TYPE_PARAMETER;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_WITH_MULTIPLE_MAP_KEY;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_WITH_NO_MAP_KEY;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_RAW_FUTURE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_RETURN_TYPE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_SET_VALUES_RETURN_SET;
+import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_THROWS;
+import static dagger.internal.codegen.MapKeys.getMapKeys;
 import static javax.lang.model.element.Modifier.ABSTRACT;
 import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.STATIC;
 import static javax.lang.model.type.TypeKind.ARRAY;
 import static javax.lang.model.type.TypeKind.DECLARED;
 import static javax.lang.model.type.TypeKind.VOID;
 
-final class ProducesMethodValidator implements Validator<ExecutableElement> {
-  private final Elements elements;
+import javax.lang.model.util.Types;
 
-  ProducesMethodValidator(Elements elements) {
+final class ProducesMethodValidator {
+  private final Elements elements;
+  private final Types types;
+
+  ProducesMethodValidator(Elements elements, Types types) {
     this.elements = checkNotNull(elements);
+    this.types = checkNotNull(types);
   }
 
   private TypeElement getSetElement() {
     return elements.getTypeElement(Set.class.getCanonicalName());
   }
 
-  @Override
-  public ValidationReport<ExecutableElement> validate(ExecutableElement producesMethodElement) {
+  ValidationReport<ExecutableElement> validate(ExecutableElement producesMethodElement) {
     ValidationReport.Builder<ExecutableElement> builder =
-        ValidationReport.Builder.about(producesMethodElement);
+        ValidationReport.about(producesMethodElement);
 
     Produces producesAnnotation = producesMethodElement.getAnnotation(Produces.class);
     checkArgument(producesAnnotation != null);
 
     Element enclosingElement = producesMethodElement.getEnclosingElement();
     if (!isAnnotationPresent(enclosingElement, ProducerModule.class)) {
-      builder.addItem(formatModuleErrorMessage(BINDING_METHOD_NOT_IN_MODULE),
-          producesMethodElement);
+      builder.addError(
+          formatModuleErrorMessage(BINDING_METHOD_NOT_IN_MODULE), producesMethodElement);
     }
 
     if (!producesMethodElement.getTypeParameters().isEmpty()) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_TYPE_PARAMETER), producesMethodElement);
+      builder.addError(formatErrorMessage(BINDING_METHOD_TYPE_PARAMETER), producesMethodElement);
     }
 
     Set<Modifier> modifiers = producesMethodElement.getModifiers();
     if (modifiers.contains(PRIVATE)) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_PRIVATE), producesMethodElement);
-    }
-    if (modifiers.contains(STATIC)) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_STATIC), producesMethodElement);
+      builder.addError(formatErrorMessage(BINDING_METHOD_PRIVATE), producesMethodElement);
     }
     if (modifiers.contains(ABSTRACT)) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_ABSTRACT), producesMethodElement);
+      builder.addError(formatErrorMessage(BINDING_METHOD_ABSTRACT), producesMethodElement);
     }
 
     TypeMirror returnType = producesMethodElement.getReturnType();
     TypeKind returnTypeKind = returnType.getKind();
     if (returnTypeKind.equals(VOID)) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_MUST_RETURN_A_VALUE),
-          producesMethodElement);
+      builder.addError(
+          formatErrorMessage(BINDING_METHOD_MUST_RETURN_A_VALUE), producesMethodElement);
+    }
+
+    TypeMirror exceptionType = elements.getTypeElement(Exception.class.getCanonicalName()).asType();
+    TypeMirror errorType = elements.getTypeElement(Error.class.getCanonicalName()).asType();
+    for (TypeMirror thrownType : producesMethodElement.getThrownTypes()) {
+      if (!types.isSubtype(thrownType, exceptionType) && !types.isSubtype(thrownType, errorType)) {
+        builder.addError(PRODUCES_METHOD_THROWS, producesMethodElement);
+        break;
+      }
     }
 
     if (!producesAnnotation.type().equals(Produces.Type.MAP)
-        && (getMapKeys(producesMethodElement) != null
-            && !getMapKeys(producesMethodElement).isEmpty())) {
-      builder.addItem(formatErrorMessage(BINDING_METHOD_NOT_MAP_HAS_MAP_KEY),
-          producesMethodElement);
+        && !getMapKeys(producesMethodElement).isEmpty()) {
+      builder.addError(
+          formatErrorMessage(BINDING_METHOD_NOT_MAP_HAS_MAP_KEY), producesMethodElement);
     }
 
     ProvidesMethodValidator.validateMethodQualifiers(builder, producesMethodElement);
@@ -104,18 +111,17 @@ final class ProducesMethodValidator implements Validator<ExecutableElement> {
         break;
       case MAP:
         validateSingleReturnType(builder, returnType);
-        ImmutableSet<? extends AnnotationMirror> annotationMirrors =
-            getMapKeys(producesMethodElement);
-        switch (annotationMirrors.size()) {
+        ImmutableSet<? extends AnnotationMirror> mapKeys = getMapKeys(producesMethodElement);
+        switch (mapKeys.size()) {
           case 0:
-            builder.addItem(formatErrorMessage(BINDING_METHOD_WITH_NO_MAP_KEY),
-                producesMethodElement);
+            builder.addError(
+                formatErrorMessage(BINDING_METHOD_WITH_NO_MAP_KEY), producesMethodElement);
             break;
           case 1:
             break;
           default:
-            builder.addItem(formatErrorMessage(BINDING_METHOD_WITH_MULTIPLE_MAP_KEY),
-                producesMethodElement);
+            builder.addError(
+                formatErrorMessage(BINDING_METHOD_WITH_MULTIPLE_MAP_KEY), producesMethodElement);
             break;
         }
         break;
@@ -150,7 +156,7 @@ final class ProducesMethodValidator implements Validator<ExecutableElement> {
       TypeMirror type) {
     TypeKind kind = type.getKind();
     if (!(kind.isPrimitive() || kind.equals(DECLARED) || kind.equals(ARRAY))) {
-      reportBuilder.addItem(PRODUCES_METHOD_RETURN_TYPE, reportBuilder.getSubject());
+      reportBuilder.addError(PRODUCES_METHOD_RETURN_TYPE, reportBuilder.getSubject());
     }
   }
 
@@ -159,7 +165,7 @@ final class ProducesMethodValidator implements Validator<ExecutableElement> {
     if (type.getKind().equals(DECLARED) && MoreTypes.isTypeOf(ListenableFuture.class, type)) {
       DeclaredType declaredType = MoreTypes.asDeclared(type);
       if (declaredType.getTypeArguments().isEmpty()) {
-        reportBuilder.addItem(PRODUCES_METHOD_RAW_FUTURE, reportBuilder.getSubject());
+        reportBuilder.addError(PRODUCES_METHOD_RAW_FUTURE, reportBuilder.getSubject());
       } else {
         validateKeyType(reportBuilder, Iterables.getOnlyElement(declaredType.getTypeArguments()));
       }
@@ -171,16 +177,16 @@ final class ProducesMethodValidator implements Validator<ExecutableElement> {
   private void validateSetType(ValidationReport.Builder<? extends Element> reportBuilder,
       TypeMirror type) {
     if (!type.getKind().equals(DECLARED)) {
-      reportBuilder.addItem(PRODUCES_METHOD_SET_VALUES_RETURN_SET, reportBuilder.getSubject());
+      reportBuilder.addError(PRODUCES_METHOD_SET_VALUES_RETURN_SET, reportBuilder.getSubject());
       return;
     }
 
     DeclaredType declaredType = MoreTypes.asDeclared(type);
     if (!declaredType.asElement().equals(getSetElement())) {
-      reportBuilder.addItem(PRODUCES_METHOD_SET_VALUES_RETURN_SET, reportBuilder.getSubject());
+      reportBuilder.addError(PRODUCES_METHOD_SET_VALUES_RETURN_SET, reportBuilder.getSubject());
     } else if (declaredType.getTypeArguments().isEmpty()) {
-      reportBuilder.addItem(formatErrorMessage(BINDING_METHOD_SET_VALUES_RAW_SET),
-          reportBuilder.getSubject());
+      reportBuilder.addError(
+          formatErrorMessage(BINDING_METHOD_SET_VALUES_RAW_SET), reportBuilder.getSubject());
     } else {
       validateSingleReturnType(reportBuilder,
           Iterables.getOnlyElement(declaredType.getTypeArguments()));

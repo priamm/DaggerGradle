@@ -33,6 +33,11 @@ public final class DoubleCheckLazy<T> implements Lazy<T> {
     if (provider == null) {
       throw new NullPointerException();
     }
+    if (provider instanceof Lazy) {
+      @SuppressWarnings("unchecked")
+      final Lazy<T> lazy = (Lazy<T>) provider;
+      return lazy;
+    }
     return new DoubleCheckLazy<T>(provider);
   }
 }

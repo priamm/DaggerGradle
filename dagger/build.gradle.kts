@@ -10,7 +10,6 @@ java {
 
 dependencies {
     implementation("javax.inject:javax.inject:1")
-    implementation("com.google.guava:guava:18.0"){
-        exclude("com.google.guava","listenablefuture")
-    }
+    implementation("com.google.guava:guava:19.0-rc2")
+    implementation("com.google.code.findbugs:jsr305:2.0.1")
 }

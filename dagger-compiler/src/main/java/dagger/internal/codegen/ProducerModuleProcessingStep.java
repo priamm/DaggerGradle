@@ -49,7 +49,8 @@ final class ProducerModuleProcessingStep implements ProcessingStep {
   }
 
   @Override
-  public Set<? extends Element> process(SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation) {
+  public Set<Element> process(
+      SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation) {
     ImmutableSet.Builder<ExecutableElement> validProducesMethodsBuilder = ImmutableSet.builder();
     for (Element producesElement : elementsByAnnotation.get(Produces.class)) {
       if (producesElement.getKind().equals(METHOD)) {
@@ -86,15 +87,18 @@ final class ProducerModuleProcessingStep implements ProcessingStep {
               moduleProducesMethodsBuilder.build();
 
           if (Sets.difference(moduleProducesMethods, validProducesMethods).isEmpty()) {
-            ImmutableSet<ProductionBinding> bindings = FluentIterable.from(moduleProducesMethods)
-                .transform(new Function<ExecutableElement, ProductionBinding>() {
-                  @Override
-                  public ProductionBinding apply(ExecutableElement producesMethod) {
-                    return productionBindingFactory.forProducesMethod(producesMethod,
-                        producesMethod.getEnclosingElement().asType());
-                  }
-                })
-                .toSet();
+            ImmutableSet<ProductionBinding> bindings =
+                FluentIterable.from(moduleProducesMethods)
+                    .transform(
+                        new Function<ExecutableElement, ProductionBinding>() {
+                          @Override
+                          public ProductionBinding apply(ExecutableElement producesMethod) {
+                            return productionBindingFactory.forProducesMethod(
+                                producesMethod,
+                                MoreElements.asType(producesMethod.getEnclosingElement()));
+                          }
+                        })
+                    .toSet();
 
             try {
               for (ProductionBinding binding : bindings) {
@@ -109,6 +113,6 @@ final class ProducerModuleProcessingStep implements ProcessingStep {
         processedModuleElements.add(moduleElement);
       }
     }
-    return null;
+    return ImmutableSet.of();
   }
 }

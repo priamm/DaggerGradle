@@ -48,7 +48,8 @@ final class ModuleProcessingStep implements BasicAnnotationProcessor.ProcessingS
   }
 
   @Override
-  public Set<? extends Element> process(SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation) {
+  public Set<Element> process(
+      SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation) {
     ImmutableSet.Builder<ExecutableElement> validProvidesMethodsBuilder = ImmutableSet.builder();
     for (Element providesElement : elementsByAnnotation.get(Provides.class)) {
       if (providesElement.getKind().equals(METHOD)) {
@@ -83,15 +84,18 @@ final class ModuleProcessingStep implements BasicAnnotationProcessor.ProcessingS
             moduleProvidesMethodsBuilder.build();
 
         if (Sets.difference(moduleProvidesMethods, validProvidesMethods).isEmpty()) {
-          ImmutableSet<ProvisionBinding> bindings = FluentIterable.from(moduleProvidesMethods)
-              .transform(new Function<ExecutableElement, ProvisionBinding>() {
-                @Override
-                public ProvisionBinding apply(ExecutableElement providesMethod) {
-                  return provisionBindingFactory.forProvidesMethod(providesMethod,
-                      providesMethod.getEnclosingElement().asType());
-                }
-              })
-              .toSet();
+          ImmutableSet<ProvisionBinding> bindings =
+              FluentIterable.from(moduleProvidesMethods)
+                  .transform(
+                      new Function<ExecutableElement, ProvisionBinding>() {
+                        @Override
+                        public ProvisionBinding apply(ExecutableElement providesMethod) {
+                          return provisionBindingFactory.forProvidesMethod(
+                              providesMethod,
+                              MoreElements.asType(providesMethod.getEnclosingElement()));
+                        }
+                      })
+                  .toSet();
 
           try {
             for (ProvisionBinding binding : bindings) {
@@ -104,6 +108,6 @@ final class ModuleProcessingStep implements BasicAnnotationProcessor.ProcessingS
       }
       processedModuleElements.add(moduleElement);
     }
-    return null;
+    return ImmutableSet.of();
   }
 }

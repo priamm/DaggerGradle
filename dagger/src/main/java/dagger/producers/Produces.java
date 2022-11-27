@@ -14,9 +14,12 @@ public @interface Produces {
 
   enum Type {
     UNIQUE,
+
     SET,
+
     SET_VALUES,
-    MAP
+
+    MAP;
   }
 
   Type type() default Type.UNIQUE;

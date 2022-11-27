@@ -2,6 +2,7 @@ package dagger.internal.codegen;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
+import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import java.util.Iterator;
 import java.util.List;
@@ -67,6 +68,20 @@ final class MethodSignatureFormatter extends Formatter<ExecutableElement> {
     return builder.toString();
   }
 
+  public String format(SourceElement sourceElement) {
+    return format(
+        MoreElements.asExecutable(sourceElement.element()),
+        sourceElement
+            .contributedBy()
+            .transform(
+                new Function<TypeElement, DeclaredType>() {
+                  @Override
+                  public DeclaredType apply(TypeElement contributingModule) {
+                    return MoreTypes.asDeclared(contributingModule.asType());
+                  }
+                }));
+  }
+
   private static void appendParameter(StringBuilder builder, VariableElement parameter,
       TypeMirror type) {
     Optional<AnnotationMirror> qualifier = InjectionAnnotations.getQualifier(parameter);
@@ -77,9 +92,6 @@ final class MethodSignatureFormatter extends Formatter<ExecutableElement> {
   }
 
   private static String nameOfType(TypeMirror type) {
-    if (type.getKind().isPrimitive()) {
-      return MoreTypes.asPrimitiveType(type).toString();
-    }
-    return stripCommonTypePrefixes(MoreTypes.asDeclared(type).toString());
+    return stripCommonTypePrefixes(type.toString());
   }
 }

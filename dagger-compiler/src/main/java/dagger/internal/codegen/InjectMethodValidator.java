@@ -12,34 +12,50 @@ import static dagger.internal.codegen.ErrorMessages.ABSTRACT_INJECT_METHOD;
 import static dagger.internal.codegen.ErrorMessages.GENERIC_INJECT_METHOD;
 import static dagger.internal.codegen.ErrorMessages.MULTIPLE_QUALIFIERS;
 import static dagger.internal.codegen.ErrorMessages.PRIVATE_INJECT_METHOD;
+import static dagger.internal.codegen.ErrorMessages.STATIC_INJECT_METHOD;
+import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProducerType;
 import static dagger.internal.codegen.InjectionAnnotations.getQualifiers;
 import static javax.lang.model.element.Modifier.ABSTRACT;
 import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.STATIC;
 
-final class InjectMethodValidator implements Validator<ExecutableElement> {
-  @Override
-  public ValidationReport<ExecutableElement> validate(ExecutableElement methodElement) {
-    ValidationReport.Builder<ExecutableElement> builder =
-        ValidationReport.Builder.about(methodElement);
+final class InjectMethodValidator {
+  private CompilerOptions compilerOptions;
+
+  public InjectMethodValidator(CompilerOptions compilerOptions) {
+    this.compilerOptions = compilerOptions;
+  }
+
+  ValidationReport<ExecutableElement> validate(ExecutableElement methodElement) {
+    ValidationReport.Builder<ExecutableElement> builder = ValidationReport.about(methodElement);
     Set<Modifier> modifiers = methodElement.getModifiers();
     if (modifiers.contains(ABSTRACT)) {
-      builder.addItem(ABSTRACT_INJECT_METHOD, methodElement);
+      builder.addError(ABSTRACT_INJECT_METHOD, methodElement);
     }
 
     if (modifiers.contains(PRIVATE)) {
-      builder.addItem(PRIVATE_INJECT_METHOD, methodElement);
+      builder.addItem(
+          PRIVATE_INJECT_METHOD, compilerOptions.privateMemberValidationKind(), methodElement);
+    }
+    
+    if (modifiers.contains(STATIC)) {
+      builder.addItem(
+          STATIC_INJECT_METHOD, compilerOptions.staticMemberValidationKind(), methodElement);
     }
 
     if (!methodElement.getTypeParameters().isEmpty()) {
-      builder.addItem(GENERIC_INJECT_METHOD, methodElement);
+      builder.addError(GENERIC_INJECT_METHOD, methodElement);
     }
 
     for (VariableElement parameter : methodElement.getParameters()) {
       ImmutableSet<? extends AnnotationMirror> qualifiers = getQualifiers(parameter);
       if (qualifiers.size() > 1) {
         for (AnnotationMirror qualifier : qualifiers) {
-          builder.addItem(MULTIPLE_QUALIFIERS, methodElement, qualifier);
+          builder.addError(MULTIPLE_QUALIFIERS, methodElement, qualifier);
         }
+      }
+      if (FrameworkTypes.isProducerType(parameter.asType())) {
+        builder.addError(provisionMayNotDependOnProducerType(parameter.asType()), parameter);
       }
     }
 

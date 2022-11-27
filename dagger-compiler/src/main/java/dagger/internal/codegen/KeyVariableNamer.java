@@ -17,10 +17,6 @@ enum KeyVariableNamer implements Function<Key, String> {
     StringBuilder builder = new StringBuilder();
 
     if (key.qualifier().isPresent()) {
-      if (!key.qualifier().get().getElementValues().isEmpty()) {
-        // TODO(gak): obviously we need to support this
-        throw new UnsupportedOperationException();
-      }
       builder.append(key.qualifier().get().getAnnotationType().asElement().getSimpleName());
     }
 

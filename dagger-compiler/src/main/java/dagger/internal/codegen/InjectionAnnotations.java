@@ -11,20 +11,6 @@ import javax.lang.model.element.Element;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 final class InjectionAnnotations {
-  static Optional<AnnotationMirror> getScopeAnnotation(Element e) {
-    checkNotNull(e);
-    ImmutableSet<? extends AnnotationMirror> scopeAnnotations = getScopes(e);
-    switch (scopeAnnotations.size()) {
-      case 0:
-        return Optional.absent();
-      case 1:
-        return Optional.<AnnotationMirror>of(scopeAnnotations.iterator().next());
-      default:
-        throw new IllegalArgumentException(
-            e + " was annotated with more than one @Scope annotation");
-    }
-  }
-
   static Optional<AnnotationMirror> getQualifier(Element e) {
     checkNotNull(e);
     ImmutableSet<? extends AnnotationMirror> qualifierAnnotations = getQualifiers(e);

@@ -1,71 +1,68 @@
 package dagger.internal.codegen;
 
 import com.google.auto.common.MoreTypes;
-import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
-import dagger.MembersInjector;
-import dagger.Provides.Type;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.FieldSpec;
+import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.ParameterSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeSpec;
+import com.squareup.javapoet.TypeVariableName;
 import dagger.internal.Factory;
-import dagger.internal.codegen.writer.ClassName;
-import dagger.internal.codegen.writer.ClassWriter;
-import dagger.internal.codegen.writer.ConstructorWriter;
-import dagger.internal.codegen.writer.EnumWriter;
-import dagger.internal.codegen.writer.FieldWriter;
-import dagger.internal.codegen.writer.JavaWriter;
-import dagger.internal.codegen.writer.MethodWriter;
-import dagger.internal.codegen.writer.ParameterizedTypeName;
-import dagger.internal.codegen.writer.Snippet;
-import dagger.internal.codegen.writer.StringLiteral;
-import dagger.internal.codegen.writer.TypeName;
-import dagger.internal.codegen.writer.TypeNames;
-import dagger.internal.codegen.writer.TypeVariableName;
-import dagger.internal.codegen.writer.TypeWriter;
+import dagger.internal.MembersInjectors;
+import dagger.internal.Preconditions;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import javax.annotation.Generated;
 import javax.annotation.processing.Filer;
 import javax.inject.Inject;
+import javax.inject.Provider;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.Modifier;
-import javax.lang.model.element.TypeParameterElement;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 
 import static com.google.common.base.Preconditions.checkState;
+import static com.squareup.javapoet.MethodSpec.constructorBuilder;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static com.squareup.javapoet.TypeSpec.enumBuilder;
 import static dagger.Provides.Type.SET;
+import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_RAWTYPES;
+import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_UNCHECKED;
+import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
+import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.ENUM_INSTANCE;
+import static dagger.internal.codegen.ContributionBinding.Kind.INJECTION;
+import static dagger.internal.codegen.ContributionBinding.Kind.PROVISION;
 import static dagger.internal.codegen.ErrorMessages.CANNOT_RETURN_NULL_FROM_NON_NULLABLE_PROVIDES_METHOD;
-import static dagger.internal.codegen.ProvisionBinding.Kind.PROVISION;
-import static dagger.internal.codegen.SourceFiles.factoryNameForProvisionBinding;
+import static dagger.internal.codegen.SourceFiles.bindingTypeElementTypeVariableNames;
 import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
-import static dagger.internal.codegen.SourceFiles.parameterizedFactoryNameForProvisionBinding;
-import static dagger.internal.codegen.writer.Snippet.makeParametersSnippet;
+import static dagger.internal.codegen.SourceFiles.generateBindingFieldsForDependencies;
+import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
+import static dagger.internal.codegen.SourceFiles.parameterizedGeneratedTypeNameForBinding;
+import static dagger.internal.codegen.TypeNames.factoryOf;
 import static javax.lang.model.element.Modifier.FINAL;
 import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.element.Modifier.PUBLIC;
+import static javax.lang.model.element.Modifier.STATIC;
 
-final class FactoryGenerator extends SourceFileGenerator<ProvisionBinding> {
-  private final DependencyRequestMapper dependencyRequestMapper;
-  private final Diagnostic.Kind nullableValidationType;
+final class FactoryGenerator extends JavaPoetSourceFileGenerator<ProvisionBinding> {
 
-  FactoryGenerator(Filer filer, DependencyRequestMapper dependencyRequestMapper,
-      Diagnostic.Kind nullableValidationType) {
-    super(filer);
-    this.dependencyRequestMapper = dependencyRequestMapper;
-    this.nullableValidationType = nullableValidationType;
+  private final CompilerOptions compilerOptions;
+
+  FactoryGenerator(Filer filer, Elements elements, CompilerOptions compilerOptions) {
+    super(filer, elements);
+    this.compilerOptions = compilerOptions;
   }
 
   @Override
   ClassName nameGeneratedType(ProvisionBinding binding) {
-    return factoryNameForProvisionBinding(binding);
-  }
-
-  @Override
-  Iterable<? extends Element> getOriginatingElements(ProvisionBinding binding) {
-    return ImmutableSet.of(binding.bindingElement());
+    return generatedClassNameForBinding(binding);
   }
 
   @Override
@@ -74,165 +71,180 @@ final class FactoryGenerator extends SourceFileGenerator<ProvisionBinding> {
   }
 
   @Override
-  ImmutableSet<JavaWriter> write(ClassName generatedTypeName, ProvisionBinding binding) {
-    checkState(!binding.hasNonDefaultTypeParameters());
+  Optional<TypeSpec.Builder> write(ClassName generatedTypeName, ProvisionBinding binding) {
+    checkState(!binding.unresolved().isPresent());
 
-    TypeMirror keyType = binding.provisionType().equals(Type.MAP)
-        ? Util.getProvidedValueTypeOfMap(MoreTypes.asDeclared(binding.key().type()))
-        : binding.key().type();
-    TypeName providedTypeName = TypeNames.forTypeMirror(keyType);
-    JavaWriter writer = JavaWriter.inPackage(generatedTypeName.packageName());
-
-    final TypeWriter factoryWriter;
-    final Optional<ConstructorWriter> constructorWriter;
-    List<TypeVariableName> typeParameters = Lists.newArrayList();
-    for (TypeParameterElement typeParameter : binding.bindingTypeElement().getTypeParameters()) {
-     typeParameters.add(TypeVariableName.fromTypeParameterElement(typeParameter));
-    }
+    TypeMirror keyType =
+        binding.contributionType().equals(ContributionType.MAP)
+            ? MapType.from(binding.key().type()).unwrappedValueType(Provider.class)
+            : binding.key().type();
+    TypeName providedTypeName = TypeName.get(keyType);
+    ParameterizedTypeName parameterizedFactoryName = factoryOf(providedTypeName);
+    Optional<ParameterizedTypeName> factoryOfRawTypeName = Optional.absent();
+    TypeSpec.Builder factoryBuilder;
+    Optional<MethodSpec.Builder> constructorBuilder = Optional.absent();
+    ImmutableList<TypeVariableName> typeParameters = bindingTypeElementTypeVariableNames(binding);
+    ImmutableMap<BindingKey, FrameworkField> fields = generateBindingFieldsForDependencies(binding);
+    boolean useRawType =
+        binding.factoryCreationStrategy() == ENUM_INSTANCE
+            && binding.bindingKind() == INJECTION
+            && !typeParameters.isEmpty();
     switch (binding.factoryCreationStrategy()) {
       case ENUM_INSTANCE:
-        EnumWriter enumWriter = writer.addEnum(generatedTypeName.simpleName());
-        enumWriter.addConstant("INSTANCE");
-        constructorWriter = Optional.absent();
-        factoryWriter = enumWriter;
-        if (!typeParameters.isEmpty()) {
-          factoryWriter.annotate(SuppressWarnings.class).setValue("rawtypes");
-          providedTypeName = ((ParameterizedTypeName) providedTypeName).type();
+        factoryBuilder = enumBuilder(generatedTypeName.simpleName()).addEnumConstant("INSTANCE");
+        if (useRawType) {
+          factoryBuilder.addAnnotation(SUPPRESS_WARNINGS_RAWTYPES);
+          providedTypeName = ((ParameterizedTypeName) providedTypeName).rawType;
+          factoryOfRawTypeName = Optional.of(factoryOf(providedTypeName));
         }
         break;
       case CLASS_CONSTRUCTOR:
-        ClassWriter classWriter = writer.addClass(generatedTypeName.simpleName());
-        classWriter.addTypeParameters(typeParameters);
-        classWriter.addModifiers(FINAL);
-        constructorWriter = Optional.of(classWriter.addConstructor());
-        constructorWriter.get().addModifiers(PUBLIC);
-        factoryWriter = classWriter;
-        if (binding.bindingKind().equals(PROVISION)) {
-          TypeName enclosingType = TypeNames.forTypeMirror(binding.bindingTypeElement().asType());
-          factoryWriter.addField(enclosingType, "module").addModifiers(PRIVATE, FINAL);
-          constructorWriter.get().addParameter(enclosingType, "module");
-          constructorWriter.get().body()
-              .addSnippet("assert module != null;")
-              .addSnippet("this.module = module;");
+        factoryBuilder =
+            classBuilder(generatedTypeName.simpleName())
+                .addTypeVariables(typeParameters)
+                .addModifiers(FINAL);
+        constructorBuilder = Optional.of(constructorBuilder().addModifiers(PUBLIC));
+        if (binding.bindingKind().equals(PROVISION)
+            && !binding.bindingElement().getModifiers().contains(STATIC)) {
+          addConstructorParameterAndTypeField(
+              TypeName.get(binding.bindingTypeElement().asType()),
+              "module",
+              factoryBuilder,
+              constructorBuilder.get());
+        }
+        for (FrameworkField bindingField : fields.values()) {
+          addConstructorParameterAndTypeField(
+              bindingField.frameworkType(),
+              bindingField.name(),
+              factoryBuilder,
+              constructorBuilder.get());
         }
         break;
       default:
         throw new AssertionError();
     }
 
-    factoryWriter.annotate(Generated.class).setValue(ComponentProcessor.class.getName());
-    factoryWriter.addModifiers(PUBLIC);
-    factoryWriter.addImplementedType(
-        ParameterizedTypeName.create(ClassName.fromClass(Factory.class), providedTypeName));
+    factoryBuilder
+        .addModifiers(PUBLIC)
+        .addSuperinterface(factoryOfRawTypeName.or(parameterizedFactoryName));
 
-    MethodWriter getMethodWriter = factoryWriter.addMethod(providedTypeName, "get");
-    getMethodWriter.annotate(Override.class);
-    getMethodWriter.addModifiers(PUBLIC);
-
-    if (binding.memberInjectionRequest().isPresent()) {
-      ParameterizedTypeName membersInjectorType = ParameterizedTypeName.create(
-          MembersInjector.class, providedTypeName);
-      factoryWriter.addField(membersInjectorType, "membersInjector").addModifiers(PRIVATE, FINAL);
-      constructorWriter.get().addParameter(membersInjectorType, "membersInjector");
-      constructorWriter.get().body()
-          .addSnippet("assert membersInjector != null;")
-          .addSnippet("this.membersInjector = membersInjector;");
-    }
-
-    ImmutableMap<BindingKey, FrameworkField> fields =
-        SourceFiles.generateBindingFieldsForDependencies(
-            dependencyRequestMapper, binding.dependencies());
-
-    for (FrameworkField bindingField : fields.values()) {
-      TypeName fieldType = bindingField.frameworkType();
-      FieldWriter field = factoryWriter.addField(fieldType, bindingField.name());
-      field.addModifiers(PRIVATE, FINAL);
-      constructorWriter.get().addParameter(field.type(), field.name());
-      constructorWriter.get().body()
-          .addSnippet("assert %s != null;", field.name())
-          .addSnippet("this.%1$s = %1$s;", field.name());
-    }
-
+    Optional<MethodSpec> createMethod;
     switch(binding.bindingKind()) {
       case INJECTION:
       case PROVISION:
-        TypeName returnType = ParameterizedTypeName.create(ClassName.fromClass(Factory.class),
-            TypeNames.forTypeMirror(keyType));
-        MethodWriter createMethodWriter = factoryWriter.addMethod(returnType, "create");
-        createMethodWriter.addTypeParameters(typeParameters);
-        createMethodWriter.addModifiers(Modifier.PUBLIC, Modifier.STATIC);
-        Map<String, TypeName> params = constructorWriter.isPresent()
-            ? constructorWriter.get().parameters() : ImmutableMap.<String, TypeName>of();
-        for (Map.Entry<String, TypeName> param : params.entrySet()) {
-          createMethodWriter.addParameter(param.getValue(), param.getKey());
+        MethodSpec.Builder createMethodBuilder =
+            methodBuilder("create")
+                .addModifiers(PUBLIC, STATIC)
+                .returns(parameterizedFactoryName);
+        if (binding.factoryCreationStrategy() != ENUM_INSTANCE
+            || binding.bindingKind() == INJECTION) {
+          createMethodBuilder.addTypeVariables(typeParameters);
         }
+        List<ParameterSpec> params =
+            constructorBuilder.isPresent()
+                ? constructorBuilder.get().build().parameters : ImmutableList.<ParameterSpec>of();
+        createMethodBuilder.addParameters(params);
         switch (binding.factoryCreationStrategy()) {
           case ENUM_INSTANCE:
-            if (typeParameters.isEmpty()) {
-              createMethodWriter.body().addSnippet("return INSTANCE;");
+            if (!useRawType) {
+              createMethodBuilder.addStatement("return INSTANCE");
             } else {
-              createMethodWriter.annotate(SuppressWarnings.class).setValue("unchecked");
-              createMethodWriter.body().addSnippet("return (Factory) INSTANCE;");
+              createMethodBuilder.addStatement("return ($T) INSTANCE", TypeNames.FACTORY);
+              createMethodBuilder.addAnnotation(SUPPRESS_WARNINGS_UNCHECKED);
             }
             break;
+
           case CLASS_CONSTRUCTOR:
-            createMethodWriter.body().addSnippet("return new %s(%s);",
-                parameterizedFactoryNameForProvisionBinding(binding),
-                Joiner.on(", ").join(params.keySet()));
+            createMethodBuilder.addStatement(
+                "return new $T($L)",
+                parameterizedGeneratedTypeNameForBinding(binding),
+                makeParametersCodeBlock(
+                    Lists.transform(params, CodeBlocks.PARAMETER_NAME)));
             break;
           default:
             throw new AssertionError();
         }
+        createMethod = Optional.of(createMethodBuilder.build());
         break;
       default:
+        createMethod = Optional.absent();
     }
 
-    List<Snippet> parameters = Lists.newArrayList();
-    for (DependencyRequest dependency : binding.dependencies()) {
-      parameters.add(frameworkTypeUsageStatement(
-          Snippet.format(fields.get(dependency.bindingKey()).name()), dependency.kind()));
+    if (constructorBuilder.isPresent()) {
+      factoryBuilder.addMethod(constructorBuilder.get().build());
     }
-    Snippet parametersSnippet = makeParametersSnippet(parameters);
+
+    List<CodeBlock> parameters = Lists.newArrayList();
+    for (DependencyRequest dependency : binding.dependencies()) {
+      parameters.add(
+          frameworkTypeUsageStatement(
+              CodeBlocks.format("$L", fields.get(dependency.bindingKey()).name()),
+              dependency.kind()));
+    }
+    CodeBlock parametersCodeBlock = makeParametersCodeBlock(parameters);
+
+    MethodSpec.Builder getMethodBuilder =
+        methodBuilder("get")
+            .returns(providedTypeName)
+            .addAnnotation(Override.class)
+            .addModifiers(PUBLIC);
 
     if (binding.bindingKind().equals(PROVISION)) {
-      if (binding.provisionType().equals(SET)) {
-        getMethodWriter.body().addSnippet("return %s.singleton(module.%s(%s));",
-            ClassName.fromClass(Collections.class),
-            binding.bindingElement().getSimpleName(),
-            parametersSnippet);
-      } else if (binding.nullableType().isPresent()
-          || nullableValidationType.equals(Diagnostic.Kind.WARNING)) {
-        if (binding.nullableType().isPresent()) {
-          getMethodWriter.annotate(
-              (ClassName) TypeNames.forTypeMirror(binding.nullableType().get()));
-        }
-        getMethodWriter.body().addSnippet("return module.%s(%s);",
-            binding.bindingElement().getSimpleName(),
-            parametersSnippet);
+      CodeBlock.Builder providesMethodInvocationBuilder = CodeBlock.builder();
+      if (binding.bindingElement().getModifiers().contains(STATIC)) {
+        providesMethodInvocationBuilder.add("$T", ClassName.get(binding.bindingTypeElement()));
       } else {
-        StringLiteral failMsg =
-            StringLiteral.forValue(CANNOT_RETURN_NULL_FROM_NON_NULLABLE_PROVIDES_METHOD);
-        getMethodWriter.body().addSnippet(Snippet.format(Joiner.on('\n').join(
-            "%s provided = module.%s(%s);",
-            "if (provided == null) {",
-            "  throw new NullPointerException(%s);",
-            "}",
-            "return provided;"),
-            getMethodWriter.returnType(),
-            binding.bindingElement().getSimpleName(),
-            parametersSnippet,
-            failMsg));
+        providesMethodInvocationBuilder.add("module");
       }
-    } else if (binding.memberInjectionRequest().isPresent()) {
-      getMethodWriter.body().addSnippet("%1$s instance = new %1$s(%2$s);",
-          providedTypeName, parametersSnippet);
-      getMethodWriter.body().addSnippet("membersInjector.injectMembers(instance);");
-      getMethodWriter.body().addSnippet("return instance;");
+      providesMethodInvocationBuilder.add(
+          ".$L($L)", binding.bindingElement().getSimpleName(), parametersCodeBlock);
+      CodeBlock providesMethodInvocation = providesMethodInvocationBuilder.build();
+
+      if (binding.provisionType().equals(SET)) {
+        TypeName paramTypeName = TypeName.get(
+            MoreTypes.asDeclared(keyType).getTypeArguments().get(0));
+        getMethodBuilder.addStatement(
+            "return $T.<$T>singleton($L)",
+            Collections.class, paramTypeName, providesMethodInvocation);
+      } else if (binding.nullableType().isPresent()
+          || compilerOptions.nullableValidationKind().equals(Diagnostic.Kind.WARNING)) {
+        if (binding.nullableType().isPresent()) {
+          getMethodBuilder.addAnnotation((ClassName) TypeName.get(binding.nullableType().get()));
+        }
+        getMethodBuilder.addStatement("return $L", providesMethodInvocation);
+      } else {
+        getMethodBuilder.addStatement("return $T.checkNotNull($L, $S)",
+            Preconditions.class,
+            providesMethodInvocation,
+            CANNOT_RETURN_NULL_FROM_NON_NULLABLE_PROVIDES_METHOD);
+      }
+    } else if (binding.membersInjectionRequest().isPresent()) {
+      getMethodBuilder.addStatement("return $T.injectMembers($L, new $T($L))",
+          MembersInjectors.class,
+          fields.get(binding.membersInjectionRequest().get().bindingKey()).name(),
+          providedTypeName,
+          parametersCodeBlock);
     } else {
-      getMethodWriter.body()
-          .addSnippet("return new %s(%s);", providedTypeName, parametersSnippet);
+      getMethodBuilder.addStatement("return new $T($L)", providedTypeName, parametersCodeBlock);
     }
 
-    return ImmutableSet.of(writer);
+    factoryBuilder.addMethod(getMethodBuilder.build());
+    if (createMethod.isPresent()) {
+      factoryBuilder.addMethod(createMethod.get());
+    }
+
+    return Optional.of(factoryBuilder);
+  }
+
+  private void addConstructorParameterAndTypeField(
+      TypeName typeName,
+      String variableName,
+      TypeSpec.Builder factoryBuilder,
+      MethodSpec.Builder constructorBuilder) {
+    FieldSpec field = FieldSpec.builder(typeName, variableName, PRIVATE, FINAL).build();
+    factoryBuilder.addField(field);
+    ParameterSpec parameter = ParameterSpec.builder(typeName, variableName).build();
+    constructorBuilder.addParameter(parameter);
+    constructorBuilder.addCode("assert $1N != null; this.$2N = $1N;", parameter, field);
   }
 }
