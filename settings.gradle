@@ -1,0 +1,6 @@
+include ':dagger'
+include ':dagger-compiler'
+include ':sample-app'
+
+project(':dagger').projectDir = new File('dagger')
+project(':dagger-compiler').projectDir = new File('dagger-compiler')

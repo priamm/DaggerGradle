@@ -1,0 +1,5 @@
+# Project exclude paths
+/dagger/build/
+/dagger/build/classes/java/main/
+/dagger-compiler/build/
+/dagger-compiler/build/classes/java/main/
