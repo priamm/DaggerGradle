@@ -63,16 +63,27 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
 
   enum Kind {
     SYNTHETIC_MAP,
+
     SYNTHETIC_MULTIBOUND_SET,
+
     SYNTHETIC_MULTIBOUND_MAP,
+
     INJECTION,
+
     PROVISION,
+
     COMPONENT,
+
     COMPONENT_PROVISION,
+
     SUBCOMPONENT_BUILDER,
+
     EXECUTOR_DEPENDENCY,
+
     IMMEDIATE,
+
     FUTURE_PRODUCTION,
+
     COMPONENT_PRODUCTION,
     ;
 

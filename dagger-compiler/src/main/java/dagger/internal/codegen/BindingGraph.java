@@ -318,7 +318,6 @@ abstract class BindingGraph {
 
             if (!explicitProducerMapBindings.isEmpty()
                 || !explicitProducerMultibindingDeclarations.isEmpty()) {
-
               contributionBindings.add(
                   productionBindingFactory.implicitMapOfProducerBinding(request));
             } else if (!explicitProviderMapBindings.isEmpty()

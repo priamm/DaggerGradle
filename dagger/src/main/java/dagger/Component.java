@@ -16,6 +16,7 @@ import static java.lang.annotation.RetentionPolicy.RUNTIME;
 @Target(TYPE)
 @Documented
 public @interface Component {
+
   Class<?>[] modules() default {};
 
   Class<?>[] dependencies() default {};

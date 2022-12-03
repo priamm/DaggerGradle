@@ -47,6 +47,7 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.PrimitiveType;
+import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.SimpleTypeVisitor6;
@@ -72,6 +73,7 @@ import static dagger.internal.codegen.ContributionBinding.indexMapBindingsByMapK
 import static dagger.internal.codegen.ContributionBinding.Kind.IS_SYNTHETIC_KIND;
 import static dagger.internal.codegen.ContributionBinding.Kind.SYNTHETIC_MULTIBOUND_MAP;
 import static dagger.internal.codegen.ContributionType.indexByContributionType;
+import static dagger.internal.codegen.ErrorMessages.CANNOT_INJECT_WILDCARD_TYPE;
 import static dagger.internal.codegen.ErrorMessages.CONTAINS_DEPENDENCY_CYCLE_FORMAT;
 import static dagger.internal.codegen.ErrorMessages.DUPLICATE_SIZE_LIMIT;
 import static dagger.internal.codegen.ErrorMessages.INDENT;
@@ -245,11 +247,11 @@ public class BindingGraphValidator {
       }
     }
 
-    private boolean validateResolvedBinding(
+    private void validateResolvedBinding(
         Deque<ResolvedRequest> path, ResolvedBindings resolvedBinding) {
       if (resolvedBinding.isEmpty()) {
         reportMissingBinding(path);
-        return false;
+        return;
       }
 
       switch (resolvedBinding.bindingKey().kind()) {
@@ -262,13 +264,13 @@ public class BindingGraphValidator {
           validateNullability(path.peek().request(), resolvedBinding.contributionBindings());
           if (resolvedBinding.contributionBindings().size() > 1) {
             reportDuplicateBindings(path);
-            return false;
+            return;
           }
           ContributionBinding contributionBinding = resolvedBinding.contributionBinding();
           if (contributionBinding.bindingType().equals(BindingType.PRODUCTION)
               && doesPathRequireProvisionOnly(path)) {
             reportProviderMayNotDependOnProducer(path);
-            return false;
+            return;
           }
           if (compilerOptions.usesProducers()) {
             Key productionImplementationExecutorKey =
@@ -279,7 +281,7 @@ public class BindingGraphValidator {
                 if (request.key().equals(productionExecutorKey)
                     || request.key().equals(productionImplementationExecutorKey)) {
                   reportDependsOnProductionExecutor(path);
-                  return false;
+                  return;
                 }
               }
             }
@@ -287,10 +289,8 @@ public class BindingGraphValidator {
           if (contributionBinding.bindingKind().equals(SYNTHETIC_MULTIBOUND_MAP)) {
             ImmutableSet<ContributionBinding> multibindings =
                 inlineSyntheticContributions(resolvedBinding).contributionBindings();
-            boolean duplicateMapKeys = reportIfDuplicateMapKeys(path, multibindings);
-            boolean inconsistentMapKeyAnnotationTypes =
-                reportIfInconsistentMapKeyAnnotationTypes(path, multibindings);
-            return !duplicateMapKeys && !inconsistentMapKeyAnnotationTypes;
+            validateMapKeySet(path, multibindings);
+            validateMapKeyAnnotationTypes(path, multibindings);
           }
           break;
         case MEMBERS_INJECTION:
@@ -301,13 +301,13 @@ public class BindingGraphValidator {
           }
           if (resolvedBinding.bindings().size() > 1) {
             reportDuplicateBindings(path);
-            return false;
+            return;
           }
-          return validateMembersInjectionBinding(getOnlyElement(resolvedBinding.bindings()), path);
+          validateMembersInjectionBinding(getOnlyElement(resolvedBinding.bindings()), path);
+          return;
         default:
           throw new AssertionError();
       }
-      return true;
     }
 
     private ResolvedBindings inlineSyntheticContributions(ResolvedBindings resolvedBinding) {
@@ -374,46 +374,41 @@ public class BindingGraphValidator {
       }
     }
 
-    private boolean reportIfDuplicateMapKeys(
+    private void validateMapKeySet(
         Deque<ResolvedRequest> path, Set<ContributionBinding> mapBindings) {
-      boolean hasDuplicateMapKeys = false;
       for (Collection<ContributionBinding> mapBindingsForMapKey :
           indexMapBindingsByMapKey(mapBindings).asMap().values()) {
         if (mapBindingsForMapKey.size() > 1) {
-          hasDuplicateMapKeys = true;
           reportDuplicateMapKeys(path, mapBindingsForMapKey);
         }
       }
-      return hasDuplicateMapKeys;
     }
 
-    private boolean reportIfInconsistentMapKeyAnnotationTypes(
+    private void validateMapKeyAnnotationTypes(
         Deque<ResolvedRequest> path, Set<ContributionBinding> contributionBindings) {
       ImmutableSetMultimap<Equivalence.Wrapper<DeclaredType>, ContributionBinding>
           mapBindingsByAnnotationType = indexMapBindingsByAnnotationType(contributionBindings);
       if (mapBindingsByAnnotationType.keySet().size() > 1) {
         reportInconsistentMapKeyAnnotations(path, mapBindingsByAnnotationType);
-        return true;
       }
-      return false;
     }
 
-    private boolean validateMembersInjectionBinding(
+    private void validateMembersInjectionBinding(
         Binding binding, final Deque<ResolvedRequest> path) {
-      return binding
+      binding
           .key()
           .type()
           .accept(
-              new SimpleTypeVisitor6<Boolean, Void>() {
+              new SimpleTypeVisitor6<Void, Void>() {
                 @Override
-                protected Boolean defaultAction(TypeMirror e, Void p) {
+                protected Void defaultAction(TypeMirror e, Void p) {
                   reportBuilder.addError(
                       "Invalid members injection request.", path.peek().request().requestElement());
-                  return false;
+                  return null;
                 }
 
                 @Override
-                public Boolean visitDeclared(DeclaredType type, Void ignored) {
+                public Void visitDeclared(DeclaredType type, Void ignored) {
                   for (TypeMirror arg : type.getTypeArguments()) {
                     boolean declared;
                     switch (arg.getKind()) {
@@ -471,7 +466,7 @@ public class BindingGraphValidator {
                               type.toString(),
                               Joiner.on('\n').join(printableDependencyPath)),
                           path.peek().request().requestElement());
-                      return false;
+                      return null;
                     }
                   }
 
@@ -491,10 +486,8 @@ public class BindingGraphValidator {
                             type.toString(),
                             Joiner.on('\n').join(printableDependencyPath)),
                         path.peek().request().requestElement());
-                    return false;
                   }
-
-                  return true;
+                  return null;
                 }
               },
               null);
@@ -749,40 +742,53 @@ public class BindingGraphValidator {
       reportBuilder.addError(errorMessage.toString(), path.getLast().request().requestElement());
     }
 
-    private void reportMissingBinding(Deque<ResolvedRequest> path) {
-      Key key = path.peek().request().key();
-      BindingKey bindingKey = path.peek().request().bindingKey();
-      boolean requiresContributionMethod = !key.isValidImplicitProvisionKey(types);
-      boolean requiresProvision = doesPathRequireProvisionOnly(path);
-      StringBuilder errorMessage = new StringBuilder();
-      String requiresErrorMessageFormat = requiresContributionMethod
-          ? requiresProvision
+    private StringBuilder requiresErrorMessageBase(Deque<ResolvedRequest> path) {
+      DependencyRequest request = path.peek().request();
+      Key key = request.key();
+      String requiresErrorMessageFormat;
+      if (key.type().getKind().equals(TypeKind.WILDCARD)) {
+        requiresErrorMessageFormat = CANNOT_INJECT_WILDCARD_TYPE;
+      } else {
+        boolean requiresProvision = doesPathRequireProvisionOnly(path);
+        if (!key.isValidImplicitProvisionKey(types)) {
+          requiresErrorMessageFormat = requiresProvision
               ? REQUIRES_PROVIDER_FORMAT
-              : REQUIRES_PROVIDER_OR_PRODUCER_FORMAT
-          : requiresProvision
+              : REQUIRES_PROVIDER_OR_PRODUCER_FORMAT;
+        } else {
+          requiresErrorMessageFormat = requiresProvision
               ? REQUIRES_AT_INJECT_CONSTRUCTOR_OR_PROVIDER_FORMAT
               : REQUIRES_AT_INJECT_CONSTRUCTOR_OR_PROVIDER_OR_PRODUCER_FORMAT;
-      errorMessage.append(String.format(requiresErrorMessageFormat, keyFormatter.format(key)));
+        }
+      }
+      StringBuilder errorMessage = new StringBuilder(
+          String.format(requiresErrorMessageFormat, keyFormatter.format(key)));
       if (key.isValidMembersInjectionKey()) {
         Optional<MembersInjectionBinding> membersInjectionBinding =
             injectBindingRegistry.getOrFindMembersInjectionBinding(key);
         if (membersInjectionBinding.isPresent()
             && !membersInjectionBinding.get().injectionSites().isEmpty()) {
-          errorMessage.append(" ").append(ErrorMessages.MEMBERS_INJECTION_DOES_NOT_IMPLY_PROVISION);
+          errorMessage.append(" ");
+          errorMessage.append(ErrorMessages.MEMBERS_INJECTION_DOES_NOT_IMPLY_PROVISION);
         }
       }
+      return errorMessage;
+    }
+
+    private void reportMissingBinding(Deque<ResolvedRequest> path) {
+      StringBuilder errorMessage = requiresErrorMessageBase(path);
       ImmutableList<String> printableDependencyPath =
           FluentIterable.from(path)
+              .filter(Predicates.not(SYNTHETIC_BINDING))
               .transform(REQUEST_FROM_RESOLVED_REQUEST)
               .transform(dependencyRequestFormatter)
               .filter(Predicates.not(Predicates.equalTo("")))
               .toList()
               .reverse();
-      for (String dependency :
-          printableDependencyPath.subList(1, printableDependencyPath.size())) {
+      for (String dependency : Iterables.skip(printableDependencyPath, 1)) {
         errorMessage.append('\n').append(dependency);
       }
-      for (String suggestion : MissingBindingSuggestions.forKey(topLevelGraph(), bindingKey)) {
+      for (String suggestion : MissingBindingSuggestions.forKey(topLevelGraph(),
+          path.peek().request().bindingKey())) {
         errorMessage.append('\n').append(suggestion);
       }
       reportBuilder.addError(errorMessage.toString(), path.getLast().request().requestElement());
@@ -921,12 +927,14 @@ public class BindingGraphValidator {
               CONTAINS_DEPENDENCY_CYCLE_FORMAT,
               componentType.getQualifiedName(),
               rootRequestElement.getSimpleName(),
-              Joiner.on("\n")
-                  .join(
-                      FluentIterable.from(requestPath)
-                          .transform(dependencyRequestFormatter)
-                          .filter(not(equalTo("")))
-                          .skip(1))),
+              FluentIterable.from(bindingPath)
+                  .skip(1)
+                  .filter(Predicates.not(SYNTHETIC_BINDING))
+                  .transform(REQUEST_FROM_RESOLVED_REQUEST)
+                  .append(request)
+                  .transform(dependencyRequestFormatter)
+                  .filter(not(equalTo("")))
+                  .join(Joiner.on('\n'))),
           ERROR,
           rootRequestElement);
     }
@@ -1013,6 +1021,7 @@ public class BindingGraphValidator {
           throw new AssertionError();
       }
     }
+
     return !provisionsDependingOnLatestRequest(path).isEmpty();
   }
 
@@ -1068,8 +1077,17 @@ public class BindingGraphValidator {
 
   private static final Function<ResolvedRequest, DependencyRequest> REQUEST_FROM_RESOLVED_REQUEST =
       new Function<ResolvedRequest, DependencyRequest>() {
-        @Override public DependencyRequest apply(ResolvedRequest resolvedRequest) {
+        @Override
+        public DependencyRequest apply(ResolvedRequest resolvedRequest) {
           return resolvedRequest.request();
+        }
+      };
+
+  private static final Predicate<ResolvedRequest> SYNTHETIC_BINDING =
+      new Predicate<ResolvedRequest>() {
+        @Override
+        public boolean apply(ResolvedRequest request) {
+          return request.binding().isSyntheticContribution();
         }
       };
 }

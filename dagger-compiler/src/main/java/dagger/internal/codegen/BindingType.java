@@ -10,7 +10,9 @@ import javax.inject.Provider;
 enum BindingType {
 
   PROVISION(Provider.class),
+
   MEMBERS_INJECTION(MembersInjector.class),
+
   PRODUCTION(Producer.class),
   ;
 

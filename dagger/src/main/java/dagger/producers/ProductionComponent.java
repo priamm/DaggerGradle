@@ -24,4 +24,3 @@ public @interface ProductionComponent {
   @Documented
   @interface Builder {}
 }
-

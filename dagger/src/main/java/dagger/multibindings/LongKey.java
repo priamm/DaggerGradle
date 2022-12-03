@@ -1,4 +1,4 @@
-package dagger.mapkeys;
+package dagger.multibindings;
 
 import dagger.MapKey;
 import dagger.internal.Beta;
@@ -11,7 +11,6 @@ import static java.lang.annotation.ElementType.METHOD;
 @Documented
 @Target(METHOD)
 @MapKey
-@Deprecated
-public @interface StringKey {
-  String value();
+public @interface LongKey {
+  long value();
 }

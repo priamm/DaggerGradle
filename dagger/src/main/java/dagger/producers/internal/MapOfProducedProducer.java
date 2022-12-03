@@ -34,7 +34,6 @@ public final class MapOfProducedProducer<K, V> extends AbstractProducer<Map<K, P
         new AsyncFunction<Map<K, Producer<V>>, Map<K, Produced<V>>>() {
           @Override
           public ListenableFuture<Map<K, Produced<V>>> apply(final Map<K, Producer<V>> map) {
-            // TODO(beder): Use Futures.whenAllComplete when Guava 20 is released.
             return Futures.transform(
                 Futures.allAsList(
                     Iterables.transform(

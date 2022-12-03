@@ -49,11 +49,17 @@ abstract class DependencyRequest {
 
   enum Kind {
     INSTANCE,
+
     PROVIDER(Provider.class),
+
     LAZY(Lazy.class),
+
     MEMBERS_INJECTOR(MembersInjector.class),
+
     PRODUCER(Producer.class),
+
     PRODUCED(Produced.class),
+
     FUTURE,
     ;
 
@@ -246,7 +252,7 @@ abstract class DependencyRequest {
                 Iterables.getOnlyElement(((DeclaredType) returnType).getTypeArguments())),
             membersInjectionMethod,
             getEnclosingType(membersInjectionMethod),
-            false,
+            false ,
             Optional.<String>absent());
       } else {
         return new AutoValue_DependencyRequest(
@@ -301,6 +307,7 @@ abstract class DependencyRequest {
       if (kindAndType.kind().equals(Kind.MEMBERS_INJECTOR)) {
         checkArgument(!qualifier.isPresent());
       }
+
       boolean allowsNull = !kindAndType.kind().equals(Kind.INSTANCE)
           || ConfigurationAnnotations.getNullableType(requestElement).isPresent();
       return new AutoValue_DependencyRequest(

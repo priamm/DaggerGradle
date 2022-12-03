@@ -204,7 +204,6 @@ final class ModuleValidator {
       ValidationReport.Builder<TypeElement> builder,
       ListMultimap<String, ExecutableElement> allMethodsByName,
       ListMultimap<String, ExecutableElement> bindingMethodsByName) {
-
     TypeElement currentClass = subject;
     TypeMirror objectType = elements.getTypeElement(Object.class.getCanonicalName()).asType();
     Set<ExecutableElement> failedMethods = Sets.newHashSet();

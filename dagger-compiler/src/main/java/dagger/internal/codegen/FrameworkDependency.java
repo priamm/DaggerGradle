@@ -41,6 +41,18 @@ abstract class FrameworkDependency {
     return frameworkDependencies.build();
   }
 
+  static ImmutableMap<DependencyRequest, FrameworkDependency> indexByDependencyRequest(
+      Iterable<FrameworkDependency> dependencies) {
+    ImmutableMap.Builder<DependencyRequest, FrameworkDependency> frameworkDependencyMap =
+        ImmutableMap.builder();
+    for (FrameworkDependency dependency : dependencies) {
+      for (DependencyRequest request : dependency.dependencyRequests()) {
+        frameworkDependencyMap.put(request, dependency);
+      }
+    }
+    return frameworkDependencyMap.build();
+  }
+
   private static ImmutableList<Collection<DependencyRequest>> groupByUnresolvedKey(
       Binding binding) {
     if (!binding.unresolved().isPresent()) {

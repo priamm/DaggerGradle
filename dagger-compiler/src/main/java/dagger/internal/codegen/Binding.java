@@ -72,14 +72,12 @@ abstract class Binding implements HasBindingType, HasKey, HasSourceElement {
         for (TypeMirror typeArgument : t.getTypeArguments()) {
           typeArgument.accept(this, p);
         }
-
         TypeElement typeElement = MoreElements.asType(t.asElement());
         if (!typeElement.getModifiers().contains(PUBLIC)) {
           PackageElement elementPackage = MoreElements.getPackage(typeElement);
           Name qualifiedName = elementPackage.getQualifiedName();
           p.add(qualifiedName.toString());
         }
-
         typeElement.getEnclosingElement().asType().accept(this, p);
         return null;
       }

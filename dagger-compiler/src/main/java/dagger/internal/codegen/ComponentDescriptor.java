@@ -12,6 +12,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ClassName;
 import dagger.Component;
 import dagger.Lazy;
@@ -199,6 +200,7 @@ abstract class ComponentDescriptor {
         .toSet();
   }
 
+  @CanIgnoreReturnValue
   private static Set<ModuleDescriptor> addTransitiveModules(
       Set<ModuleDescriptor> transitiveModules, ModuleDescriptor module) {
     if (transitiveModules.add(module)) {
@@ -521,7 +523,9 @@ abstract class ComponentDescriptor {
       }
       TypeElement executorTypeElement = elements.getTypeElement(Executor.class.getCanonicalName());
       if (!builderSpec.isPresent()) {
-        return Optional.of(executorTypeElement);
+        return componentKind.equals(Kind.PRODUCTION_COMPONENT)
+            ? Optional.of(executorTypeElement)
+            : Optional.<TypeElement>absent();
       }
       return builderSpec.get().methodMap().containsKey(executorTypeElement)
           ? Optional.of(executorTypeElement)

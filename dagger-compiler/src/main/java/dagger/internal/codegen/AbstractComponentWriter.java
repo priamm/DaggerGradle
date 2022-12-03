@@ -720,7 +720,6 @@ abstract class AbstractComponentWriter {
                   "$L.$L()",
                   localFactoryVariable,
                   binding.bindingElement().getSimpleName().toString());
-
           CodeBlock getMethodBody =
               binding.nullableType().isPresent()
                       || compilerOptions.nullableValidationKind().equals(Diagnostic.Kind.WARNING)
@@ -802,13 +801,13 @@ abstract class AbstractComponentWriter {
                       "    return $7L.$5L();",
                       "  }",
                       "}"),
-              /* 1 */ PRODUCER,
-              /* 2 */ TypeName.get(binding.key().type()),
-              /* 3 */ LISTENABLE_FUTURE,
-              /* 4 */ getComponentContributionExpression(bindingTypeElement),
-              /* 5 */ binding.bindingElement().getSimpleName().toString(),
-              /* 6 */ TypeName.get(bindingTypeElement.asType()),
-              /* 7 */ simpleVariableName(bindingTypeElement));
+              PRODUCER,
+              TypeName.get(binding.key().type()),
+              LISTENABLE_FUTURE,
+              getComponentContributionExpression(bindingTypeElement),
+              binding.bindingElement().getSimpleName().toString(),
+              TypeName.get(bindingTypeElement.asType()),
+              simpleVariableName(bindingTypeElement));
         }
 
       case IMMEDIATE:

@@ -79,6 +79,7 @@ class BuilderValidator {
     if (!modifiers.contains(STATIC)) {
       builder.addError(msgs.mustBeStatic(), subject);
     }
+
     if (!modifiers.contains(ABSTRACT)) {
       builder.addError(msgs.mustBeAbstract(), subject);
     }

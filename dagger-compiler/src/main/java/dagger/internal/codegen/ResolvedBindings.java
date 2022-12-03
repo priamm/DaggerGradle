@@ -151,6 +151,10 @@ abstract class ResolvedBindings implements HasBindingType, HasContributionType, 
         && contributionBinding().contributionType().isMultibinding();
   }
 
+  boolean isSyntheticContribution() {
+    return contributionBindings().size() == 1 && contributionBinding().isSyntheticBinding();
+  }
+
   ContributionBinding contributionBinding() {
     return getOnlyElement(contributionBindings());
   }

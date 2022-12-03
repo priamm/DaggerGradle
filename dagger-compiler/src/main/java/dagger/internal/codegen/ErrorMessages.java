@@ -51,6 +51,10 @@ final class ErrorMessages {
   static final String INJECT_INTO_PRIVATE_CLASS =
       "Dagger does not support injection into private classes";
 
+  static final String CANNOT_INJECT_WILDCARD_TYPE =
+      "Dagger does not support injecting Provider<T>, Lazy<T> or Produced<T> when T is a wildcard "
+          + "type such as <%s>.";
+
   static final String DUPLICATE_BINDINGS_FOR_KEY_FORMAT =
       "%s is bound multiple times:";
 
